@@ -1,73 +1,47 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from "react"
 
-const Sender = () => {
-    const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
-    const videoRef = useRef<HTMLVideoElement | null>(null);
-    const ws = useRef<WebSocket | null>(null);
-
-    const initiateConn = () => {
-        if (ws.current) {
-            ws.current.close();
+export const Sender = () => {
+    const [socket, setSocket] = useState<WebSocket | null>(null);
+    useEffect(() => {
+        const socket = new WebSocket("ws://localhost:8080/ws");
+        setSocket(socket);
+        socket.onopen = () => {
+            console.log("Connected to server");
+            socket.send(JSON.stringify({type: "sender"}));
+        };
+    },[])
+    const StartVideo = async() => {
+        if (!socket) return;
+        const pc = new RTCPeerConnection();
+        pc.onnegotiationneeded = async() => {
+            console.log("negotiationneeded");
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socket?.send(JSON.stringify({type: "createOffer", sdp: offer}));
+        }
+        pc.onicecandidate = (event) => {
+            console.log(event.candidate);
+            if (event.candidate) {
+                socket?.send(JSON.stringify({type: "iceCandidate", candidate: event.candidate}));
+            }
         }
 
-        ws.current = new WebSocket('ws://localhost:8080/ws');
-
-        ws.current.onopen = () => {
-            console.log('WebSocket connection established.');
-            ws.current?.send(JSON.stringify({ type: 'sender' }));
-        };
-
-        ws.current.onmessage = (event) => {
+        socket.onmessage = (event) => {
             const message = JSON.parse(event.data);
-            console.log('Received message:', message);
-            // Handle incoming messages
-        };
-
-        ws.current.onclose = (event) => {
-            console.log('WebSocket connection closed:', event);
-            if (event.code !== 1000) { // 1000 indicates a normal closure
-                console.log('Attempting to reconnect...');
-                setTimeout(initiateConn, 5000); // Attempt to reconnect after 5 seconds
+            if (message.type === "createAnswer") {
+                pc.setRemoteDescription(message.sdp);
+            } else if (message.type === "iceCandidate") {
+                pc.addIceCandidate(message.candidate);
             }
-        };
+        }
 
-        ws.current.onerror = (error) => {
-            console.error('WebSocket error:', error);
-            ws.current?.close();
-        };
-    };
+        const stream = await navigator.mediaDevices.getUserMedia({video: true});
+        pc.addTrack(stream.getVideoTracks()[0])
+    }
 
-    useEffect(() => {
-        initiateConn();
 
-        return () => {
-            ws.current?.close();
-        };
-    }, []);
-
-    useEffect(() => {
-        const getMedia = async () => {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                setVideoStream(stream);
-                if (videoRef.current) {
-                    videoRef.current.srcObject = stream;
-                }
-            } catch (error) {
-                console.error('Error accessing media devices.', error);
-            }
-        };
-
-        getMedia();
-    }, []);
-
-    return (
-        <div>
-            <h2>Sender</h2>
-            <button onClick={initiateConn}>Send data</button>
-            <video ref={videoRef} autoPlay playsInline />
-        </div>
-    );
-};
-
-export default Sender;
+    return <div>
+        Sender
+        <button onClick={StartVideo}>send video</button>
+    </div>
+}

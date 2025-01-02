@@ -13,8 +13,8 @@ import (
 
 type Message struct {
 	Type      string `json:"type"`
-	SDP       string `json:"sdp"`
-	Candidate string `json:"candidate"`
+	SDP       any    `json:"sdp"`
+	Candidate any    `json:"candidate"`
 }
 
 var (
@@ -57,26 +57,37 @@ func main() {
 				break
 			}
 			log.Println("Received message:", string(msg))
+
 			var message Message
 			if err := json.Unmarshal(msg, &message); err != nil {
 				log.Println("Error unmarshalling message:", err)
 				continue
 			}
+
 			switch message.Type {
 			case "sender":
 				mu.Lock()
 				senderSocket = conn
+				log.Println("Sender connected. ")
 				mu.Unlock()
 				log.Println("Sender connected.")
 			case "receiver":
 				mu.Lock()
 				receiverSocket = conn
+				log.Println("Receiver connected. ")
 				mu.Unlock()
 				log.Println("Receiver connected.")
 			case "createOffer":
 				mu.Lock()
+				log.Println("Sending createOffer to receiver")
 				if receiverSocket != nil && senderSocket == conn {
+					msg := Message{
+						Type: message.Type,
+						SDP:  message.SDP,
+					}
 					err := receiverSocket.WriteJSON(msg)
+					log.Println(msg)
+					log.Println("Sending createOffer to receiver")
 					if err != nil {
 						log.Println("Error sending createOffer:", err)
 					}
@@ -84,8 +95,14 @@ func main() {
 				mu.Unlock()
 			case "createAnswer":
 				mu.Lock()
+				log.Println("Sending createAnswer to sender")
 				if senderSocket != nil && receiverSocket == conn {
+					msg := Message{
+						Type: message.Type,
+						SDP:  message.SDP,
+					}
 					err := senderSocket.WriteJSON(msg)
+					log.Println("Sending createAnswer to sender")
 					if err != nil {
 						log.Println("Error sending createAnswer:", err)
 					}
@@ -93,15 +110,14 @@ func main() {
 				mu.Unlock()
 			case "iceCandidate":
 				mu.Lock()
-				target := receiverSocket
-				if conn == receiverSocket {
-					target = senderSocket
+				message := Message{
+					Type:      "iceCandidate",
+					Candidate: message.Candidate,
 				}
-				if target != nil {
-					err := target.WriteJSON(msg)
-					if err != nil {
-						log.Println("Error sending ICE candidate:", err)
-					}
+				if conn == senderSocket {
+					receiverSocket.WriteJSON(message)
+				} else if conn == receiverSocket {
+					senderSocket.WriteJSON(message)
 				}
 				mu.Unlock()
 			default:
